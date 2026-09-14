@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Poki</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #poki {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #000;
+    }
+
+    #copyright {
+      position: fixed;
+      right: max(8px, env(safe-area-inset-right));
+      bottom: max(6px, env(safe-area-inset-bottom));
+      z-index: 2147483647;
+      padding: 3px 6px;
+      border-radius: 5px;
+      background: rgba(0,0,0,.58);
+      color: rgba(255,255,255,.82);
+      font: 10px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      text-decoration: none;
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
+    }
+
+    #copyright:hover {
+      color: #fff;
+      background: rgba(0,0,0,.72);
+    }
+  </style>
+</head>
+<body>
+  <iframe
+    id="poki"
+    title="Poki"
+    referrerpolicy="strict-origin-when-cross-origin"
+    allow="autoplay; fullscreen; gamepad; clipboard-read; clipboard-write"
+    allowfullscreen
+  ></iframe>
+
+  <a id="copyright" href="https://poki.com/" target="_blank" rel="noopener noreferrer">© Poki · poki.com</a>
+
+  <script>
+    (() => {
+      const BASE = 'https://poki.com';
+      const path = location.pathname === '/' ? '/' : location.pathname;
+      const target = BASE + path + location.search + location.hash;
+      document.getElementById('poki').src = target;
+    })();
+  </script>
+</body>
+</html>
