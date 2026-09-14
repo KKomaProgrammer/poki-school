@@ -1,59 +1,134 @@
 const MAIN_HOST = 'poki.com';
-const PROXY_PREFIX = '/__poki_host/';
+const POKI_PREFIX = '/__poki_host/';
+const EXTERNAL_PREFIX = '/__external_host/';
 const BUILTIN_ROOTS = ['poki.com', 'poki-cdn.com', 'poki-gdn.com'];
 const BUILTIN_EXACT_HOSTS = ['games.poki.com', 't.poki.com'];
+const encoder = new TextEncoder();
 
-function extraRoots(env) {
-  return String(env?.PROXY_EXTRA_HOSTS || '')
-    .split(',')
-    .map(v => v.trim().toLowerCase())
-    .filter(Boolean);
+function normalizeHost(hostname) {
+  return String(hostname || '').trim().toLowerCase().replace(/\.$/, '');
 }
 
-function allowedHost(hostname, env) {
-  const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+function builtinHost(hostname) {
+  const host = normalizeHost(hostname);
   if (BUILTIN_EXACT_HOSTS.includes(host)) return true;
-  return [...BUILTIN_ROOTS, ...extraRoots(env)].some(root =>
-    host === root || host.endsWith(`.${root}`)
+  return BUILTIN_ROOTS.some(root => host === root || host.endsWith(`.${root}`));
+}
+
+function publicHostname(hostname) {
+  const host = normalizeHost(hostname);
+  if (!host || host.length > 253) return false;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
+  if (host.includes(':')) return false; // IPv6 literals are intentionally not proxied.
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return false; // Do not proxy direct IP literals.
+  if (!host.includes('.')) return false;
+  if (!/^[a-z0-9.-]+$/.test(host)) return false;
+  if (host.includes('..')) return false;
+  return host.split('.').every(label => label && label.length <= 63 && !label.startsWith('-') && !label.endsWith('-'));
+}
+
+function bytesToBase64Url(bytes) {
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function hostSignature(host, env) {
+  const secret = String(env?.PROXY_SIGNING_SECRET || '');
+  if (!secret) return null;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
   );
+  const signed = await crypto.subtle.sign('HMAC', key, encoder.encode(normalizeHost(host)));
+  return bytesToBase64Url(new Uint8Array(signed)).slice(0, 32);
 }
 
-function localBase(origin, host) {
-  host = host.toLowerCase();
-  return host === MAIN_HOST ? origin : `${origin}${PROXY_PREFIX}${host}`;
+async function externalBase(origin, host, env) {
+  host = normalizeHost(host);
+  if (!publicHostname(host)) return null;
+  const sig = await hostSignature(host, env);
+  if (!sig) return null;
+  return `${origin}${EXTERNAL_PREFIX}${encodeURIComponent(host)}/${sig}`;
 }
 
-function upstreamFromRequest(requestUrl, env) {
+async function localBase(origin, host, env) {
+  host = normalizeHost(host);
+  if (host === MAIN_HOST) return origin;
+  if (builtinHost(host)) return `${origin}${POKI_PREFIX}${encodeURIComponent(host)}`;
+  return externalBase(origin, host, env);
+}
+
+async function verifyExternal(host, signature, env) {
+  if (!publicHostname(host) || !signature) return false;
+  const expected = await hostSignature(host, env);
+  return Boolean(expected && expected === signature);
+}
+
+async function upstreamFromRequest(requestUrl, env) {
   const incoming = new URL(requestUrl);
 
-  if (incoming.pathname.startsWith(PROXY_PREFIX)) {
-    const rest = incoming.pathname.slice(PROXY_PREFIX.length);
+  if (incoming.pathname.startsWith(POKI_PREFIX)) {
+    const rest = incoming.pathname.slice(POKI_PREFIX.length);
     const slash = rest.indexOf('/');
-    const host = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash)).toLowerCase();
-    if (!allowedHost(host, env)) throw new Error('disallowed host');
+    const host = normalizeHost(decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash)));
+    if (!builtinHost(host)) throw new Error('disallowed Poki host');
     const path = slash === -1 ? '/' : rest.slice(slash);
+    return new URL(`https://${host}${path}${incoming.search}`);
+  }
+
+  if (incoming.pathname.startsWith(EXTERNAL_PREFIX)) {
+    const rest = incoming.pathname.slice(EXTERNAL_PREFIX.length);
+    const parts = rest.split('/');
+    const host = normalizeHost(decodeURIComponent(parts.shift() || ''));
+    const signature = parts.shift() || '';
+    if (!(await verifyExternal(host, signature, env))) throw new Error('invalid external host signature');
+    const path = '/' + parts.join('/');
     return new URL(`https://${host}${path}${incoming.search}`);
   }
 
   return new URL(`https://${MAIN_HOST}${incoming.pathname}${incoming.search}`);
 }
 
-function rewriteUrls(text, origin, env) {
-  if (!text) return text;
+async function replacementMap(text, origin, env) {
+  const hosts = new Set();
+  for (const match of text.matchAll(/(?:(?:https:)?\/\/)([a-z0-9.-]+)(?=[:/])/gi)) hosts.add(normalizeHost(match[1]));
+  for (const match of text.matchAll(/https?:\\\/\\\/([a-z0-9.-]+)(?=\\\/)/gi)) hosts.add(normalizeHost(match[1]));
 
-  text = text.replace(/(?:(https?):)?\/\/([a-z0-9.-]+)(?=[:/])/gi, (all, scheme, host) => {
-    if (!allowedHost(host, env)) return all;
-    return localBase(origin, host);
+  const map = new Map();
+  await Promise.all([...hosts].map(async host => {
+    const base = await localBase(origin, host, env);
+    if (base) map.set(host, base);
+  }));
+  return map;
+}
+
+async function rewriteUrls(text, origin, upstreamUrl, env) {
+  if (!text) return text;
+  const map = await replacementMap(text, origin, env);
+
+  text = text.replace(/(?:(https:)?\/\/)([a-z0-9.-]+)(?=[:/])/gi, (all, scheme, host) => {
+    return map.get(normalizeHost(host)) || all;
   });
 
   const escapedOrigin = origin.replace(/\//g, '\\/');
-  const escapedPrefix = PROXY_PREFIX.replace(/\//g, '\\/');
   text = text.replace(/https?:\\\/\\\/([a-z0-9.-]+)(?=\\\/)/gi, (all, host) => {
-    if (!allowedHost(host, env)) return all;
-    return host.toLowerCase() === MAIN_HOST
-      ? escapedOrigin
-      : `${escapedOrigin}${escapedPrefix}${host.toLowerCase()}`;
+    const base = map.get(normalizeHost(host));
+    return base ? base.replace(/\//g, '\\/') : all;
   });
+
+  // When a third-party HTML/JS/JSON/CSS response uses root-relative string URLs,
+  // keep those requests on that same signed external host instead of falling back to poki.com.
+  if (!builtinHost(upstreamUrl.hostname)) {
+    const base = await externalBase(origin, upstreamUrl.hostname, env);
+    if (base) {
+      text = text.replace(/(["'`])\/(?!\/)/g, `$1${base}/`);
+      text = text.replace(/url\(\s*\/((?!\/)[^)"']*)\)/gi, `url(${base}/$1)`);
+    }
+  }
 
   return text;
 }
@@ -66,18 +141,18 @@ function addCopyright(html) {
     : html + badge;
 }
 
-function requestHeaders(request) {
+function requestHeaders(request, upstreamUrl) {
   const headers = new Headers(request.headers);
   for (const h of ['host','cf-connecting-ip','cf-ipcountry','cf-ray','cf-visitor','x-forwarded-for','x-forwarded-proto','x-real-ip']) {
     headers.delete(h);
   }
   headers.delete('accept-encoding');
-  if (headers.has('origin')) headers.set('origin', 'https://poki.com');
-  if (headers.has('referer')) headers.set('referer', 'https://poki.com/');
+  if (headers.has('origin')) headers.set('origin', upstreamUrl.origin);
+  if (headers.has('referer')) headers.set('referer', `${upstreamUrl.origin}/`);
   return headers;
 }
 
-function responseHeaders(upstream, origin, env) {
+async function responseHeaders(upstream, origin, env) {
   const headers = new Headers(upstream.headers);
   headers.delete('content-length');
   headers.delete('content-encoding');
@@ -87,8 +162,9 @@ function responseHeaders(upstream, origin, env) {
   if (location) {
     try {
       const u = new URL(location, 'https://poki.com');
-      if (allowedHost(u.hostname, env)) {
-        headers.set('location', `${localBase(origin, u.hostname)}${u.pathname}${u.search}${u.hash}`);
+      if (u.protocol === 'https:') {
+        const base = await localBase(origin, u.hostname, env);
+        if (base) headers.set('location', `${base}${u.pathname}${u.search}${u.hash}`);
       }
     } catch (_) {}
   }
@@ -111,14 +187,14 @@ export async function onRequest(context) {
   let upstreamUrl;
 
   try {
-    upstreamUrl = upstreamFromRequest(request.url, env);
+    upstreamUrl = await upstreamFromRequest(request.url, env);
   } catch (_) {
-    return new Response('Forbidden host', { status: 403 });
+    return new Response('Forbidden or unsigned host', { status: 403 });
   }
 
   const init = {
     method: request.method,
-    headers: requestHeaders(request),
+    headers: requestHeaders(request, upstreamUrl),
     redirect: 'manual'
   };
   if (!['GET', 'HEAD'].includes(request.method)) init.body = request.body;
@@ -127,7 +203,7 @@ export async function onRequest(context) {
   try {
     upstream = await fetch(upstreamUrl.toString(), init);
   } catch (error) {
-    return new Response(`Poki upstream unavailable: ${error?.message || 'fetch failed'}`, {
+    return new Response(`Upstream unavailable: ${error?.message || 'fetch failed'}`, {
       status: 502,
       headers: { 'content-type': 'text/plain; charset=utf-8' }
     });
@@ -135,7 +211,7 @@ export async function onRequest(context) {
 
   if (upstream.status === 101) return upstream;
 
-  const headers = responseHeaders(upstream, incoming.origin, env);
+  const headers = await responseHeaders(upstream, incoming.origin, env);
   const contentType = headers.get('content-type') || '';
 
   if (request.method === 'HEAD' || !textLike(contentType)) {
@@ -147,7 +223,7 @@ export async function onRequest(context) {
   }
 
   let body = await upstream.text();
-  body = rewriteUrls(body, incoming.origin, env);
+  body = await rewriteUrls(body, incoming.origin, upstreamUrl, env);
 
   if (contentType.toLowerCase().includes('text/html') && upstreamUrl.hostname === MAIN_HOST) {
     body = addCopyright(body);
