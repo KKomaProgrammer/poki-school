@@ -19,8 +19,8 @@ function publicHostname(hostname) {
   const host = normalizeHost(hostname);
   if (!host || host.length > 253) return false;
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
-  if (host.includes(':')) return false; // IPv6 literals are intentionally not proxied.
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return false; // Do not proxy direct IP literals.
+  if (host.includes(':')) return false;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return false;
   if (!host.includes('.')) return false;
   if (!/^[a-z0-9.-]+$/.test(host)) return false;
   if (host.includes('..')) return false;
@@ -95,8 +95,9 @@ async function upstreamFromRequest(requestUrl, env) {
 
 async function replacementMap(text, origin, env) {
   const hosts = new Set();
-  for (const match of text.matchAll(/(?:(?:https:)?\/\/)([a-z0-9.-]+)(?=[:/])/gi)) hosts.add(normalizeHost(match[1]));
-  for (const match of text.matchAll(/https?:\\\/\\\/([a-z0-9.-]+)(?=\\\/)/gi)) hosts.add(normalizeHost(match[1]));
+  for (const match of text.matchAll(/https:\/\/([a-z0-9.-]+)(?=[:/])/gi)) hosts.add(normalizeHost(match[1]));
+  for (const match of text.matchAll(/(^|[^:])\/\/([a-z0-9.-]+)(?=[:/])/gim)) hosts.add(normalizeHost(match[2]));
+  for (const match of text.matchAll(/https:\\\/\\\/([a-z0-9.-]+)(?=\\\/)/gi)) hosts.add(normalizeHost(match[1]));
 
   const map = new Map();
   await Promise.all([...hosts].map(async host => {
@@ -110,18 +111,20 @@ async function rewriteUrls(text, origin, upstreamUrl, env) {
   if (!text) return text;
   const map = await replacementMap(text, origin, env);
 
-  text = text.replace(/(?:(https:)?\/\/)([a-z0-9.-]+)(?=[:/])/gi, (all, scheme, host) => {
+  text = text.replace(/https:\/\/([a-z0-9.-]+)(?=[:/])/gi, (all, host) => {
     return map.get(normalizeHost(host)) || all;
   });
 
-  const escapedOrigin = origin.replace(/\//g, '\\/');
-  text = text.replace(/https?:\\\/\\\/([a-z0-9.-]+)(?=\\\/)/gi, (all, host) => {
+  text = text.replace(/(^|[^:])\/\/([a-z0-9.-]+)(?=[:/])/gim, (all, prefix, host) => {
+    const base = map.get(normalizeHost(host));
+    return base ? `${prefix}${base}` : all;
+  });
+
+  text = text.replace(/https:\\\/\\\/([a-z0-9.-]+)(?=\\\/)/gi, (all, host) => {
     const base = map.get(normalizeHost(host));
     return base ? base.replace(/\//g, '\\/') : all;
   });
 
-  // When a third-party HTML/JS/JSON/CSS response uses root-relative string URLs,
-  // keep those requests on that same signed external host instead of falling back to poki.com.
   if (!builtinHost(upstreamUrl.hostname)) {
     const base = await externalBase(origin, upstreamUrl.hostname, env);
     if (base) {
@@ -152,7 +155,7 @@ function requestHeaders(request, upstreamUrl) {
   return headers;
 }
 
-async function responseHeaders(upstream, origin, env) {
+async function responseHeaders(upstream, origin, upstreamUrl, env) {
   const headers = new Headers(upstream.headers);
   headers.delete('content-length');
   headers.delete('content-encoding');
@@ -161,7 +164,7 @@ async function responseHeaders(upstream, origin, env) {
   const location = headers.get('location');
   if (location) {
     try {
-      const u = new URL(location, 'https://poki.com');
+      const u = new URL(location, upstreamUrl);
       if (u.protocol === 'https:') {
         const base = await localBase(origin, u.hostname, env);
         if (base) headers.set('location', `${base}${u.pathname}${u.search}${u.hash}`);
@@ -211,7 +214,7 @@ export async function onRequest(context) {
 
   if (upstream.status === 101) return upstream;
 
-  const headers = await responseHeaders(upstream, incoming.origin, env);
+  const headers = await responseHeaders(upstream, incoming.origin, upstreamUrl, env);
   const contentType = headers.get('content-type') || '';
 
   if (request.method === 'HEAD' || !textLike(contentType)) {
