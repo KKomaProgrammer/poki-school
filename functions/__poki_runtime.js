@@ -20,6 +20,13 @@ export function onRequest() {
     return proxyMap[host] ? String(proxyMap[host]).replace(/\/$/, '') : '';
   }
 
+  function pokiBase(hostname) {
+    const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+    if (host === 'poki.com') return PAGE_ORIGIN;
+    if (host.endsWith('.poki.com')) return PAGE_ORIGIN + POKI_PREFIX + encodeURIComponent(host);
+    return '';
+  }
+
   function proxify(value) {
     if (value == null) return value;
     const raw = value instanceof URL ? value.href : String(value);
@@ -37,6 +44,10 @@ export function onRequest() {
     }
 
     if (u.protocol !== 'https:') return value;
+
+    const builtin = pokiBase(u.hostname);
+    if (builtin) return builtin + u.pathname + u.search + u.hash;
+
     const base = mappedBase(u.hostname);
     if (!base) return value;
     return base + u.pathname + u.search + u.hash;
