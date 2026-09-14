@@ -12,6 +12,19 @@ Cloudflare Pages Functions에서 Poki와 게임 실행에 필요한 외부 게�
 - 메인 Poki HTML에는 작은 `© Poki · poki.com` 표시를 추가합니다.
 - HTTPS 리다이렉트 `Location`도 서버 프록시 주소로 다시 매핑합니다.
 
+## 브라우저 요청도 백엔드 경유
+
+정적 HTML 안의 주소만 바꾸는 것이 아니라 실행 중 만들어지는 요청도 가능한 범위에서 같은 Cloudflare 백엔드 경로를 사용하도록 구성했습니다.
+
+- `functions/_middleware.js`가 HTML/CSS 응답을 한 번 더 처리합니다.
+- 외부 게임 호스트의 `/assets/...` 같은 루트 상대경로를 해당 게임 호스트의 프록시 경로로 고정합니다.
+- `functions/__poki_runtime.js`가 페이지에 자동 주입됩니다.
+- 런타임의 `fetch()`와 `XMLHttpRequest` 상대경로 요청은 현재 게임 호스트의 백엔드 프록시 경로로 바뀝니다.
+- JavaScript가 동적으로 설정하는 `src`, `href`, `action`, `poster`, `data` 속성도 현재 게임 호스트를 향하는 경우 같은 백엔드 경로를 사용합니다.
+- 이미 서버가 `/__external_host/.../<서명>/...` 형태로 바꾼 외부 게임사/CDN URL은 계속 Cloudflare 백엔드에서 처리됩니다.
+
+임의 사용자가 아무 외부 주소나 직접 입력해 중계할 수 있는 공개 오픈 프록시는 만들지 않습니다. 서버가 Poki/게임 응답에서 발견해 서명한 외부 주소와 현재 게임 호스트의 요청을 백엔드로 전달합니다.
+
 ## Poki 기본 도메인
 
 다음 Poki 계열 주소는 별도 서명 없이 기본 프록시됩니다.
