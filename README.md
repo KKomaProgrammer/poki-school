@@ -13,7 +13,7 @@ Cloudflare Pages용 Poki 래퍼입니다.
 
 - Framework preset: `None`
 - Build command: 비워 둠
-- Build output directory: `/`
+- Build output directory: `.`
 
 GitHub 저장소를 Cloudflare Pages에 연결하면 됩니다.
 
