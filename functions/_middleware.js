@@ -88,10 +88,23 @@ function isRootRedirect(response, requestUrl) {
 }
 
 function patchLauncherJs(body) {
-  return body.replace(
-    'location.assign(data.path);',
-    "const opened=window.open(data.path,'_blank','noopener');if(!opened){status.textContent='새 탭을 열 수 없습니다. 팝업 차단을 허용해 주세요.';}else{status.textContent='새 탭에서 열었습니다.';}"
-  );
+  return body
+    .replace(
+      "status.textContent='연결 중...';",
+      "const newTab=window.open('about:blank','_blank');if(!newTab){status.textContent='새 탭을 열 수 없습니다. 팝업 차단을 허용해 주세요.';return;}status.textContent='연결 중...';"
+    )
+    .replace(
+      'status.textContent=await response.text();',
+      'try{newTab.close();}catch(_){}status.textContent=await response.text();'
+    )
+    .replace(
+      'location.assign(data.path);',
+      "newTab.location.replace(data.path);status.textContent='새 탭에서 열었습니다.';"
+    )
+    .replace(
+      "status.textContent='연결 설정에 실패했습니다.';",
+      "try{newTab.close();}catch(_){}status.textContent='연결 설정에 실패했습니다.';"
+    );
 }
 
 function removeLauncherNote(body) {
