@@ -1,6 +1,7 @@
 const MAIN_HOST = 'poki.com';
 const PROXY_PREFIX = '/__poki_host/';
 const BUILTIN_ROOTS = ['poki.com', 'poki-cdn.com', 'poki-gdn.com'];
+const BUILTIN_EXACT_HOSTS = ['games.poki.com', 't.poki.com'];
 
 function extraRoots(env) {
   return String(env?.PROXY_EXTRA_HOSTS || '')
@@ -11,6 +12,7 @@ function extraRoots(env) {
 
 function allowedHost(hostname, env) {
   const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  if (BUILTIN_EXACT_HOSTS.includes(host)) return true;
   return [...BUILTIN_ROOTS, ...extraRoots(env)].some(root =>
     host === root || host.endsWith(`.${root}`)
   );
