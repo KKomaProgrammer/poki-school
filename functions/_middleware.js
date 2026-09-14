@@ -2,6 +2,7 @@ const OPEN_COOKIE = 'schoolpoki_open_root_once';
 const SESSION_PATH = '/__proxy_session';
 const HOME_PATH = '/__home';
 const LAUNCHER_JS_PATH = '/__launcher.js';
+const RUNTIME_PATHS = new Set(['/__proxy_runtime.js', '/__poki_runtime', '/__poki_runtime.js']);
 
 function parseCookies(request) {
   const out = {};
@@ -23,11 +24,16 @@ function clearOpenCookie() {
   return `${OPEN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
 }
 
-function noStore(response) {
-  const headers = new Headers(response.headers);
+function noStoreHeaders(headers) {
   headers.set('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
   headers.set('pragma', 'no-cache');
   headers.set('expires', '0');
+  headers.delete('content-length');
+  return headers;
+}
+
+function noStore(response) {
+  const headers = noStoreHeaders(new Headers(response.headers));
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -35,14 +41,21 @@ function noStore(response) {
   });
 }
 
+function launcherCleanupCode() {
+  return `\n(async()=>{\ntry{\n  if('serviceWorker' in navigator){\n    const regs=await navigator.serviceWorker.getRegistrations();\n    await Promise.all(regs.map(reg=>reg.unregister().catch(()=>false)));\n  }\n}catch(_){}\ntry{\n  if('caches' in window){\n    const keys=await caches.keys();\n    await Promise.all(keys.map(key=>caches.delete(key).catch(()=>false)));\n  }\n}catch(_){}\ntry{if(location.pathname==='${HOME_PATH}')history.replaceState(null,'','/');}catch(_){}\n})();\n`;
+}
+
+function runtimeProtectionCode() {
+  return `\n(()=>{\ntry{\n  if('serviceWorker' in navigator && navigator.serviceWorker.register){\n    navigator.serviceWorker.register=function(){\n      return Promise.reject(new Error('Service Worker is disabled inside this proxy.'));\n    };\n  }\n}catch(_){}\n})();\n`;
+}
+
 export async function onRequest(context) {
   const request = context.request;
   const url = new URL(request.url);
   const cookies = parseCookies(request);
 
-  // A fresh visit to the proxy root must never reuse an old CDN/auth target.
-  // The only exception is the short-lived root-open cookie set when the user
-  // explicitly entered a URL whose pathname is '/'.
+  // Never reuse a stale target host for a fresh visit to '/'. This prevents a
+  // previous CDN/auth host from becoming the next root page and returning S3 AccessDenied.
   if (request.method === 'GET' && url.pathname === '/' && cookies[OPEN_COOKIE] !== '1') {
     return noStore(Response.redirect(`${url.origin}${HOME_PATH}`, 302));
   }
@@ -63,30 +76,41 @@ export async function onRequest(context) {
     headers.append('set-cookie', openCookie());
   }
 
+  // Let a root-to-root redirect chain finish before clearing the one-shot cookie.
   if (request.method === 'GET' && url.pathname === '/' && cookies[OPEN_COOKIE] === '1') {
-    headers.append('set-cookie', clearOpenCookie());
+    const location = headers.get('location');
+    let keepForRootRedirect = false;
+    if (response.status >= 300 && response.status < 400 && location) {
+      try {
+        const target = new URL(location, url);
+        keepForRootRedirect = target.pathname === '/';
+      } catch (_) {}
+    }
+    if (!keepForRootRedirect) headers.append('set-cookie', clearOpenCookie());
   }
 
-  // Keep the visible launcher URL clean after the internal /__home recovery.
   if (url.pathname === LAUNCHER_JS_PATH && response.ok) {
     const body = await response.text();
-    const extra = "\ntry{if(location.pathname==='/__home')history.replaceState(null,'','/');}catch(_){}\n";
-    headers.delete('content-length');
-    headers.delete('content-encoding');
-    headers.set('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
-    headers.set('pragma', 'no-cache');
-    headers.set('expires', '0');
-    return new Response(body + extra, {
+    headers = noStoreHeaders(headers);
+    return new Response(body + launcherCleanupCode(), {
       status: response.status,
       statusText: response.statusText,
       headers
     });
   }
 
-  headers.set('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
-  headers.set('pragma', 'no-cache');
-  headers.set('expires', '0');
-  headers.delete('content-length');
+  if (RUNTIME_PATHS.has(url.pathname) && response.ok) {
+    const body = await response.text();
+    headers = noStoreHeaders(headers);
+    return new Response(body + runtimeProtectionCode(), {
+      status: response.status,
+      statusText: response.statusText,
+      headers
+    });
+  }
+
+  headers = noStoreHeaders(headers);
+  if (url.pathname === HOME_PATH) headers.set('clear-site-data', '"cache"');
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
