@@ -1,7 +1,8 @@
 const MAIN_HOST = 'poki.com';
 const POKI_PREFIX = '/__poki_host/';
 const EXTERNAL_PREFIX = '/__external_host/';
-const RUNTIME_PATH = '/__poki_runtime.js';
+const RUNTIME_PATH = '/__poki_runtime';
+const RUNTIME_ALIAS = '/__poki_runtime.js';
 
 function escapeAttr(value) {
   return String(value)
@@ -92,7 +93,7 @@ function injectRuntime(html, info, origin) {
 
 export async function onRequest(context) {
   const incoming = new URL(context.request.url);
-  if (incoming.pathname === RUNTIME_PATH) return context.next();
+  if (incoming.pathname === RUNTIME_PATH || incoming.pathname === RUNTIME_ALIAS) return context.next();
 
   const response = await context.next();
   if (context.request.method === 'HEAD' || response.status === 101 || !response.body) return response;
