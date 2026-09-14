@@ -56,7 +56,7 @@ function hostAllowed(hostname, patterns) {
       const root = pattern.slice(2);
       return host.endsWith(`.${root}`) && host !== root;
     }
-    return true;//host === pattern;
+    return host === pattern;
   });
 }
 
