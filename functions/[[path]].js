@@ -8,7 +8,7 @@ const COOKIE_NAME = 'schoolpoki_target';
 const DEFAULT_ALLOWED = [
   'poki.com', '*.poki.com',
   'poki-cdn.com', '*.poki-cdn.com',
-  'poki-gdn.com', '*.poki-gdn.com'
+  'poki-gdn.com', '*.poki-gdn.com', '*'
 ];
 
 function normalizeHost(value) {
