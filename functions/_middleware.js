@@ -74,13 +74,24 @@ function launcherResponse() {
   return new Response(html, { status: 200, headers });
 }
 
+function isRootRedirect(response, requestUrl) {
+  if (response.status < 300 || response.status >= 400) return false;
+  const location = response.headers.get('location');
+  if (!location) return false;
+  try {
+    const target = new URL(location, requestUrl);
+    return target.pathname === '/';
+  } catch (_) {
+    return false;
+  }
+}
+
 export async function onRequest(context) {
   const request = context.request;
   const url = new URL(request.url);
   const cookies = parseCookies(request);
 
-  // Fresh visits to the site root always show the launcher directly.
-  // No redirect and no stale target host is reused.
+  // A direct visit to the proxy root always shows the launcher immediately.
   if (request.method === 'GET' && url.pathname === '/' && cookies[OPEN_COOKIE] !== '1') {
     return launcherResponse();
   }
@@ -97,13 +108,19 @@ export async function onRequest(context) {
   const response = await context.next();
   const headers = noStore(new Headers(response.headers));
 
-  // Only a URL explicitly entered by the user may use '/' once as a proxied root.
+  // Only an explicitly entered root URL gets this short-lived marker.
   if (sessionTargetIsRoot && response.ok) {
     headers.append('set-cookie', openCookie());
   }
 
   if (request.method === 'GET' && url.pathname === '/' && cookies[OPEN_COOKIE] === '1') {
-    headers.append('set-cookie', clearOpenCookie());
+    if (isRootRedirect(response, url)) {
+      // Root -> root redirects (for example example.com -> www.example.com)
+      // must be allowed to finish before the marker is removed.
+      headers.append('set-cookie', openCookie());
+    } else {
+      headers.append('set-cookie', clearOpenCookie());
+    }
   }
 
   return new Response(response.body, {
