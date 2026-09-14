@@ -1,87 +1,104 @@
 # poki-school
 
-Cloudflare Pages Functions에서 Poki와 게임 실행에 필요한 외부 게임사/CDN 리소스를 서버 측으로 가져와 같은 사이트에서 표시하는 reverse proxy입니다.
+Cloudflare Pages Functions에서 **허용한 HTTPS 사이트**를 서버 측으로 가져와 같은 Pages 도메인에서 표시하는 allowlist 기반 reverse proxy입니다. Poki 전용이 아니라 `ALLOWED_ORIGINS`에 등록한 다른 사이트에도 같은 구조를 사용할 수 있습니다.
 
-## 현재 구조
+## 접속 화면
 
-- `functions/[[path]].js`가 모든 경로를 Cloudflare Pages Functions 백엔드에서 처리합니다.
-- `/en/g/...` 같은 일반 경로는 서버가 `https://poki.com`의 같은 경로를 `fetch()`해서 응답합니다.
-- HTML/CSS/JS/JSON/SVG 안의 절대 URL을 검사해 Poki 도메인뿐 아니라 외부 게임사/CDN의 공개 HTTPS 도메인도 프록시 주소로 자동 재작성합니다.
-- 이미지, WASM, 폰트, 오디오, 영상 등 바이너리 응답도 Cloudflare 서버가 스트리밍합니다.
-- Poki 페이지 자체를 감싸는 외부 iframe은 사용하지 않습니다. 원본 게임이 자체적으로 iframe을 사용하는 경우 그 구조는 유지되며, HTTPS `src`가 텍스트 응답에서 발견되면 역시 프록시 경로로 재작성될 수 있습니다.
-- 메인 Poki HTML에는 작은 `© Poki · poki.com` 표시를 추가합니다.
-- HTTPS 리다이렉트 `Location`도 서버 프록시 주소로 다시 매핑합니다.
+`https://schoolpoki.pages.dev/`에 접속하면 URL 입력 화면이 표시됩니다.
 
-## HTTPS 요청 백엔드 경유
+- HTTPS 주소를 입력하고 **접속**을 누르면 해당 페이지를 백엔드가 가져와 표시합니다.
+- 브라우저가 Clipboard API 읽기를 허용하는 경우, 클립보드에 복사된 HTTPS 링크를 자동으로 입력합니다.
+- 브라우저 정책상 자동 클립보드 읽기가 차단된 경우에는 **클립보드에서 붙여넣기** 버튼을 눌러 사용할 수 있습니다.
+- HTTP 주소는 지원하지 않습니다.
 
-정적 HTML 안의 주소뿐 아니라 실행 중 만들어지는 HTTPS 요청도 서버가 이미 승인·서명한 호스트라면 Cloudflare 백엔드 경로로 보냅니다.
+## 프록시 주소 형식
 
-- `functions/_middleware.js`가 HTML/CSS 응답을 추가 처리하고 현재 게임 호스트 기준의 프록시 정보를 런타임에 전달합니다.
-- 실제 런타임 함수 경로는 `/__poki_runtime`입니다.
-- 기존 `/__poki_runtime.js` 요청은 404 대신 `/__poki_runtime`으로 리다이렉트합니다.
-- `fetch()`와 `XMLHttpRequest`의 HTTPS 요청을 승인된 프록시 경로로 변경합니다.
-- `navigator.sendBeacon()` 요청도 동일하게 처리합니다.
-- JavaScript가 동적으로 설정하는 `src`, `href`, `action`, `poster`, `data` 속성도 승인된 HTTPS 호스트면 백엔드 경로로 변경합니다.
-- `img.src`, `script.src`, `iframe.src`, `link.href`, `form.action`, `video/audio/source` 같은 속성을 직접 대입하는 경우도 처리합니다.
-- `EventSource` HTTPS 요청도 승인된 프록시 주소를 사용합니다.
-- 현재 게임 호스트의 `/assets/...` 같은 루트 상대경로는 해당 게임사의 백엔드 프록시 경로로 고정됩니다.
-- 서버 응답 안에서 이미 `/__external_host/.../<서명>/...` 형태로 변환된 외부 게임사/CDN은 이후 요청도 계속 Cloudflare 백엔드에서 처리합니다.
+허용된 사이트는 다음 형식으로 같은 Pages 도메인 안에서 열립니다.
 
-임의 사용자가 아무 외부 주소나 직접 입력해 중계할 수 있는 공개 오픈 프록시는 만들지 않습니다. Poki/게임 응답에서 서버가 발견하고 서명한 외부 HTTPS 호스트와 현재 게임 호스트의 요청을 백엔드로 전달합니다.
-
-## Poki 기본 도메인
-
-`poki.com` 자체와 **모든 `*.poki.com` 서브도메인**은 별도 서명 없이 항상 백엔드 프록시됩니다.
+`/__proxy_host/<호스트>/<경로>`
 
 예:
 
-- `https://games.poki.com/...` → `/__poki_host/games.poki.com/...`
-- `https://poki-auth.poki.com/...` → `/__poki_host/poki-auth.poki.com/...`
-- `https://game-cdn.poki.com/...` → `/__poki_host/game-cdn.poki.com/...`
-- 그 밖의 임의의 `https://<subdomain>.poki.com/...` 역시 `/__poki_host/<subdomain>.poki.com/...`로 처리됩니다.
+`https://example.com/game/index.html`
 
-다음 호스트는 코드에도 명시적으로 기본 지원 대상으로 적어 두었습니다.
+→
 
-- `game-cdn.poki.com`
-- `games.poki.com`
-- `poki-auth.poki.com`
-- `t.poki.com`
+`https://schoolpoki.pages.dev/__proxy_host/example.com/game/index.html`
 
-또한 기존대로 다음 계열도 기본 프록시됩니다.
+이 경로는 Cloudflare Pages Function이 받아 원본 HTTPS 서버를 `fetch()`하고 응답을 다시 전달합니다.
 
-- `poki-cdn.com` 및 서브도메인
-- `poki-gdn.com` 및 서브도메인
+## iframe / 하위 리소스 / 동적 요청
 
-## 모든 외부 게임사 도메인 지원
+프록시된 HTML에는 런타임이 자동 삽입됩니다. 따라서 허용 목록에 포함된 호스트라면 다음 요청도 프록시 경로를 사용합니다.
 
-Poki에서 일부 게임이 다른 게임사, 퍼블리셔 또는 CDN 도메인을 사용하는 경우에도 동작하도록 공개 HTTPS 호스트를 자동 지원합니다.
+- `iframe.src`
+- `img.src`, `img.srcset`
+- `script.src`
+- `link.href`
+- `form.action`
+- `video`, `audio`, `source`, `poster`
+- `object.data`
+- `fetch()`
+- `XMLHttpRequest`
+- `navigator.sendBeacon()`
+- `EventSource`
+- `Worker`, `SharedWorker`
+- `window.open()`
+- JavaScript의 `setAttribute()`로 동적으로 지정되는 URL
+- CSS의 동적 `url(...)`
 
-예를 들어 Poki가 반환한 HTML/JS/JSON/CSS 안에서 다음과 같은 주소가 발견되면:
+iframe의 `src`가 허용 도메인이면 iframe 자체도 `/__proxy_host/...`로 열리므로, 그 iframe 내부 HTML에도 동일한 런타임이 다시 삽입됩니다.
 
-`https://cdn.example-game-studio.com/assets/game.js`
+HTML/CSS/JavaScript/JSON/XML/SVG 안의 허용된 절대 HTTPS URL도 가능한 범위에서 프록시 URL로 다시 작성합니다. 이미지, WASM, 폰트, 오디오, 영상 등 바이너리 응답은 서버에서 스트리밍합니다.
 
-Cloudflare 응답에서는 다음 형태의 서명된 프록시 주소로 바뀝니다.
+## 리다이렉트
 
-`/__external_host/cdn.example-game-studio.com/<서명>/assets/game.js`
+원본 서버가 `301`, `302`, `303`, `307`, `308`과 `Location` 헤더를 반환하면 대상 URL을 확인합니다.
 
-서명은 서버에서 HMAC-SHA256으로 생성·검증합니다. 따라서 외부 게임사 도메인의 종류를 미리 모두 등록할 필요는 없지만, 방문자가 이 프로젝트를 임의의 사이트를 중계하는 공개 오픈 프록시로 사용하는 것은 방지합니다.
+- 대상 도메인이 허용 목록에 있으면 자동으로 `/__proxy_host/...` 주소로 다시 리다이렉트합니다.
+- 허용 목록 밖으로 이동하려는 경우에는 외부로 직접 빠져나가지 않고 `403`으로 차단합니다.
 
-직접 IP 주소, `localhost`, `.local`, `.internal` 등 내부 네트워크용 호스트는 프록시하지 않습니다. 외부 게임 콘텐츠는 HTTPS 도메인 이름을 사용하는 경우에 자동 지원됩니다.
+## 허용 도메인 설정
 
-## 필수 Cloudflare 환경 변수
+임의 사용자가 이 프로젝트를 아무 사이트나 중계하는 공개 오픈 프록시로 사용할 수 없도록, 서버는 **허용 목록에 등록된 호스트만** 프록시합니다.
 
-외부 게임사 도메인 자동 프록시를 사용하려면 Cloudflare Pages 프로젝트에 다음 환경 변수를 추가해야 합니다.
+Cloudflare Pages → **Settings → Variables and Secrets**에 다음 환경 변수를 추가합니다.
 
-- 변수명: `PROXY_SIGNING_SECRET`
-- 값: 충분히 긴 임의 문자열 (권장 32자 이상)
+- 변수명: `ALLOWED_ORIGINS`
+- 값: 쉼표, 공백 또는 세미콜론으로 구분한 도메인 목록
 
-예시 형식:
+예:
 
-`PROXY_SIGNING_SECRET=<랜덤한 32자 이상의 비밀값>`
+```text
+ALLOWED_ORIGINS=example.com,*.example.com,cdn.example.net,*.game-studio.com
+```
 
-이 값은 GitHub 저장소에 커밋하지 말고 Cloudflare Pages의 **Settings → Environment variables / Variables and Secrets**에서 Secret으로 등록하십시오.
+지원 형식:
 
-이 값이 없어도 Poki 기본 도메인은 계속 동작하지만, Poki 밖의 임의 게임사/CDN 도메인은 안전을 위해 자동 프록시되지 않습니다.
+- `example.com` → 정확히 `example.com`만 허용
+- `*.example.com` → `www.example.com`, `cdn.example.com` 등 하위 도메인 허용
+- `https://example.com` 형식으로 넣어도 호스트명만 사용
+
+보안상 `*` 전체 허용은 무시하며, 직접 IP 주소, `localhost`, `.local`, `.internal` 같은 내부 네트워크 호스트는 허용하지 않습니다.
+
+### 기본 허용 Poki 도메인
+
+기존 Poki 동작을 유지하기 위해 다음은 환경변수 없이 기본 허용됩니다.
+
+- `poki.com`
+- `*.poki.com`
+- `poki-cdn.com`
+- `*.poki-cdn.com`
+- `poki-gdn.com`
+- `*.poki-gdn.com`
+
+따라서 `games.poki.com`, `poki-auth.poki.com`, `game-cdn.poki.com`, `t.poki.com`도 기본적으로 백엔드를 거칩니다.
+
+## 기존 Poki 경로 호환
+
+이전 버전의 `/__poki_host/<host>/...` 경로도 계속 읽을 수 있도록 호환 처리가 남아 있습니다. `/__poki_runtime`과 `/__poki_runtime.js`도 새 통합 런타임을 반환합니다.
+
+새 페이지에서는 `/__proxy_host/<host>/...`를 사용합니다.
 
 ## Cloudflare Pages 배포
 
@@ -89,8 +106,13 @@ Cloudflare 응답에서는 다음 형태의 서명된 프록시 주소로 바뀝
 - Build command: 비워 둠
 - Build output directory: `.`
 
-GitHub 저장소를 Cloudflare Pages 프로젝트에 연결하면 `functions` 디렉터리가 Pages Functions로 자동 배포됩니다.
+GitHub 저장소를 Cloudflare Pages 프로젝트에 연결하면 `functions/[[path]].js`가 접속 화면과 프록시 요청을 모두 처리합니다.
 
-## 참고
+## 제한 사항
 
-이 구성은 Poki 및 해당 게임/외부 게임사 콘텐츠에 대해 필요한 사용·프록시·재배포 권한을 보유한 환경을 전제로 합니다.
+- 일부 사이트는 자체 CSP, 인증 방식, Service Worker, WebSocket, 쿠키 구조 등 때문에 완전히 동일하게 동작하지 않을 수 있습니다.
+- 브라우저의 Clipboard API는 사용자 권한/브라우저 정책에 따라 페이지 로드 즉시 읽기가 거부될 수 있습니다. 이 경우 붙여넣기 버튼을 사용합니다.
+- 사이트가 사용하는 별도 API/CDN/iframe 도메인도 백엔드로 보내려면 해당 호스트를 `ALLOWED_ORIGINS`에 함께 추가해야 합니다.
+- 원본 사이트의 보안 헤더를 강제로 제거하거나 우회하지 않습니다.
+
+이 구성은 프록시할 각 사이트 및 리소스에 대해 필요한 사용·중계 권한을 보유한 환경을 전제로 합니다.
