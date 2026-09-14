@@ -111,6 +111,15 @@ function removeLauncherNote(body) {
   return body.replace(/\s*<div class="note">직접 입력해 조회한 URL만 저장합니다\. 리다이렉트와 사이트 내부 이동은 최근 기록에 추가하지 않습니다\.<\/div>/g, '');
 }
 
+function repairStaticAssetLinks(body) {
+  return body.replace(/<link\b[^>]*>/gi, tag =>
+    tag.replace(
+      /(\bhref\s*=\s*)(["'])\/__nav_host\/([^"']+)\2/i,
+      '$1$2/__asset_host/$3$2'
+    )
+  );
+}
+
 export async function onRequest(context) {
   const request = context.request;
   const url = new URL(request.url);
@@ -151,8 +160,11 @@ export async function onRequest(context) {
     });
   }
 
-  if (url.pathname === HOME_PATH && response.ok && String(headers.get('content-type') || '').includes('text/html')) {
-    const body = removeLauncherNote(await response.text());
+  const contentType = String(headers.get('content-type') || '');
+  if (response.ok && contentType.includes('text/html')) {
+    let body = await response.text();
+    body = removeLauncherNote(body);
+    body = repairStaticAssetLinks(body);
     headers.delete('content-encoding');
     return new Response(body, {
       status: response.status,
