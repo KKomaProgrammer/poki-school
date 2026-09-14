@@ -17,7 +17,8 @@ Cloudflare Pages Functions에서 Poki와 게임 실행에 필요한 외부 게�
 정적 HTML 안의 주소뿐 아니라 실행 중 만들어지는 HTTPS 요청도 서버가 이미 승인·서명한 호스트라면 Cloudflare 백엔드 경로로 보냅니다.
 
 - `functions/_middleware.js`가 HTML/CSS 응답을 추가 처리하고 현재 게임 호스트 기준의 프록시 정보를 런타임에 전달합니다.
-- `functions/__poki_runtime.js`가 페이지에 자동 주입됩니다.
+- 실제 런타임 함수 경로는 `/__poki_runtime`입니다.
+- 기존 `/__poki_runtime.js` 요청은 404 대신 `/__poki_runtime`으로 리다이렉트합니다.
 - `fetch()`와 `XMLHttpRequest`의 HTTPS 요청을 승인된 프록시 경로로 변경합니다.
 - `navigator.sendBeacon()` 요청도 동일하게 처리합니다.
 - JavaScript가 동적으로 설정하는 `src`, `href`, `action`, `poster`, `data` 속성도 승인된 HTTPS 호스트면 백엔드 경로로 변경합니다.
@@ -30,18 +31,26 @@ Cloudflare Pages Functions에서 Poki와 게임 실행에 필요한 외부 게�
 
 ## Poki 기본 도메인
 
-다음 Poki 계열 주소는 별도 서명 없이 기본 프록시됩니다.
-
-- `poki.com` 및 서브도메인
-- `poki-cdn.com` 및 서브도메인
-- `poki-gdn.com` 및 서브도메인
-- `games.poki.com`
-- `t.poki.com`
+`poki.com` 자체와 **모든 `*.poki.com` 서브도메인**은 별도 서명 없이 항상 백엔드 프록시됩니다.
 
 예:
 
 - `https://games.poki.com/...` → `/__poki_host/games.poki.com/...`
-- `https://t.poki.com/...` → `/__poki_host/t.poki.com/...`
+- `https://poki-auth.poki.com/...` → `/__poki_host/poki-auth.poki.com/...`
+- `https://game-cdn.poki.com/...` → `/__poki_host/game-cdn.poki.com/...`
+- 그 밖의 임의의 `https://<subdomain>.poki.com/...` 역시 `/__poki_host/<subdomain>.poki.com/...`로 처리됩니다.
+
+다음 호스트는 코드에도 명시적으로 기본 지원 대상으로 적어 두었습니다.
+
+- `game-cdn.poki.com`
+- `games.poki.com`
+- `poki-auth.poki.com`
+- `t.poki.com`
+
+또한 기존대로 다음 계열도 기본 프록시됩니다.
+
+- `poki-cdn.com` 및 서브도메인
+- `poki-gdn.com` 및 서브도메인
 
 ## 모든 외부 게임사 도메인 지원
 
