@@ -2,7 +2,7 @@ const MAIN_HOST = 'poki.com';
 const POKI_PREFIX = '/__poki_host/';
 const EXTERNAL_PREFIX = '/__external_host/';
 const BUILTIN_ROOTS = ['poki.com', 'poki-cdn.com', 'poki-gdn.com'];
-const BUILTIN_EXACT_HOSTS = ['games.poki.com', 't.poki.com'];
+const BUILTIN_EXACT_HOSTS = ['games.poki.com', 'poki-auth.poki.com', 't.poki.com'];
 const encoder = new TextEncoder();
 
 function normalizeHost(hostname) {
