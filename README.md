@@ -7,7 +7,7 @@ Cloudflare Pages Functions에서 Poki를 서버 측으로 가져와 같은 사�
 - `functions/[[path]].js`가 모든 경로를 Cloudflare Pages Functions 백엔드에서 처리합니다.
 - `/en/g/...` 같은 일반 경로는 서버가 `https://poki.com`의 같은 경로를 `fetch()`해서 응답합니다.
 - HTML/CSS/JS/JSON/SVG 안의 Poki 계열 절대 URL을 이 Pages 사이트의 프록시 경로로 바꿉니다.
-- `img.poki-cdn.com`, `a.poki-cdn.com`, `gdn.poki.com` 등 Poki 계열 자산도 `/__poki_host/<호스트>/...`를 통해 서버에서 가져옵니다.
+- `img.poki-cdn.com`, `a.poki-cdn.com`, `gdn.poki.com`, `games.poki.com`, `t.poki.com` 등 Poki 계열 자산도 `/__poki_host/<호스트>/...`를 통해 서버에서 가져옵니다.
 - 이미지, WASM, 폰트, 오디오, 영상 등 바이너리 응답은 서버가 스트리밍합니다.
 - Poki 페이지 자체를 감싸는 외부 iframe은 사용하지 않습니다. Poki 원본 페이지 내부에서 게임을 위해 자체적으로 사용하는 iframe은 원본 구조 그대로 유지될 수 있으며, 그 `src`가 Poki 계열 도메인이면 역시 이 서버 경로로 재작성됩니다.
 - 메인 Poki HTML에는 작은 `© Poki · poki.com` 표시를 추가합니다.
@@ -20,6 +20,13 @@ Cloudflare Pages Functions에서 Poki를 서버 측으로 가져와 같은 사�
 - `poki.com`
 - `poki-cdn.com`
 - `poki-gdn.com`
+
+또한 다음 호스트를 명시적 기본 지원 대상으로 둡니다.
+
+- `games.poki.com`
+- `t.poki.com`
+
+`games.poki.com`과 `t.poki.com`은 `/__poki_host/games.poki.com/...`, `/__poki_host/t.poki.com/...` 경로로 서버 프록시되며, HTML/CSS/JS 등에서 해당 절대 URL이 발견되면 자동으로 이 경로로 재작성됩니다.
 
 따라서 이 프로젝트가 임의의 외부 주소를 전달하는 공개 오픈 프록시가 되지 않습니다.
 
