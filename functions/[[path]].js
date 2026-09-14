@@ -1,8 +1,10 @@
 const MAIN_HOST = 'poki.com';
 const POKI_PREFIX = '/__poki_host/';
 const EXTERNAL_PREFIX = '/__external_host/';
+const RUNTIME_PATH = '/__poki_runtime';
+const RUNTIME_ALIAS = '/__poki_runtime.js';
 const BUILTIN_ROOTS = ['poki.com', 'poki-cdn.com', 'poki-gdn.com'];
-const BUILTIN_EXACT_HOSTS = ['games.poki.com', 'poki-auth.poki.com', 't.poki.com'];
+const BUILTIN_EXACT_HOSTS = ['game-cdn.poki.com', 'games.poki.com', 'poki-auth.poki.com', 't.poki.com'];
 const encoder = new TextEncoder();
 
 function normalizeHost(hostname) {
@@ -187,6 +189,11 @@ function textLike(contentType) {
 export async function onRequest(context) {
   const { request, env } = context;
   const incoming = new URL(request.url);
+
+  if (incoming.pathname === RUNTIME_ALIAS) {
+    return Response.redirect(`${incoming.origin}${RUNTIME_PATH}${incoming.search}`, 302);
+  }
+
   let upstreamUrl;
 
   try {
